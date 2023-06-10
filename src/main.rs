@@ -21,10 +21,13 @@ enum AstExpression {
     Invalid,
 }
 
+type ParserError = String;
+
 pub struct Parser {
     lexer: Lexer,
     current_token_info: TokenInfo,
     peek_token_info: TokenInfo,
+    errors: Vec<ParserError>,
 }
 
 impl Parser {
@@ -36,6 +39,7 @@ impl Parser {
             lexer,
             current_token_info: current,
             peek_token_info: peek,
+            errors: Vec::new(),
         }
     }
 
@@ -123,117 +127,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lexer_simple_tokens() {
-        let code = "+=(){},;";
-        let expected_tokens = {
-            use Token::*;
-            vec![
-                Plus,
-                Assignment,
-                LeftParenthesis,
-                RightParenthesis,
-                LeftBrace,
-                RightBrace,
-                Comma,
-                Semicolon,
-                Eof,
-            ]
-        };
-        let mut lexer = Lexer::from_code_str(code);
-        for expected_token in expected_tokens {
-            assert_eq!(lexer.next_token_info().token, expected_token);
-        }
-    }
-
-    #[test]
-    fn lexer_basic_code() {
-        let code = "let five = 5;
-let add = fn(x,y) {
-    x + y;
-};\n";
-        let expected_lines_columns_tokens = {
-            use Token::*;
-            vec![
-                (1, 1, Let),
-                (1, 5, Identifier("five".into())),
-                (1, 10, Assignment),
-                (1, 12, Integer("5".into())),
-                (1, 13, Semicolon),
-                (2, 1, Let),
-                (2, 5, Identifier("add".into())),
-                (2, 9, Assignment),
-                (2, 11, Function),
-                (2, 13, LeftParenthesis),
-                (2, 14, Identifier("x".into())),
-                (2, 15, Comma),
-                (2, 16, Identifier("y".into())),
-                (2, 17, RightParenthesis),
-                (2, 19, LeftBrace),
-                (3, 5, Identifier("x".into())),
-                (3, 7, Plus),
-                (3, 9, Identifier("y".into())),
-                (3, 10, Semicolon),
-                (4, 1, RightBrace),
-                (4, 2, Semicolon),
-            ]
-        };
-        let mut lexer = Lexer::from_code_str(code);
-        for expected in expected_lines_columns_tokens {
-            let token_info = lexer.next_token_info();
-            assert_eq!(
-                (token_info.line, token_info.column, token_info.token),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn lexer_operators() {
-        let code = "+-*/<>!";
-        let expected_tokens = {
-            use Token::*;
-            vec![Plus, Minus, Asterisk, Slash, LessThan, GreaterThan, Bang]
-        };
-        let mut lexer = Lexer::from_code_str(code);
-        for expected in expected_tokens {
-            let token_info = lexer.next_token_info();
-            assert_eq!(token_info.token, expected);
-        }
-    }
-
-    #[test]
-    fn lexer_keywords() {
-        let code = "true false fn return if else let";
-        let expected_tokens = {
-            use Token::*;
-            vec![True, False, Function, Return, If, Else, Let]
-        };
-        let mut lexer = Lexer::from_code_str(code);
-        for expected in expected_tokens {
-            let token_info = lexer.next_token_info();
-            assert_eq!(token_info.token, expected);
-        }
-    }
-
-    #[test]
-    fn lexer_two_character_operators() {
-        let code = "== !=";
-        let expected_tokens = {
-            use Token::*;
-            vec![Equal, NotEqual]
-        };
-        let mut lexer = Lexer::from_code_str(code);
-        for expected in expected_tokens {
-            let token_info = lexer.next_token_info();
-            assert_eq!(token_info.token, expected);
-        }
-    }
-
-    #[test]
     fn parser_let_statement() {
         let code = "let a = 3; let asdf = 4; let foobar = 1009348;";
         let identifiers = vec!["a", "asdf", "foobar"];
-        let mut lexer = Lexer::from_code_str(code);
+        let lexer = Lexer::from_code_str(code);
         let mut parser = Parser::with_lexer(lexer);
         let program = parser.parse_program();
 

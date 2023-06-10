@@ -1,4 +1,7 @@
 use std::io::Write;
+use std::mem::{discriminant, Discriminant};
+
+use thiserror::Error;
 
 mod lexer;
 use lexer::{Lexer, Token, TokenInfo};
@@ -21,13 +24,91 @@ enum AstExpression {
     Invalid,
 }
 
-type ParserError = String;
+#[derive(Error, Debug, Clone)]
+#[error("{filename}:{line}:{column} {inner}")]
+struct ParserError {
+    filename: String,
+    line: u32,
+    column: u32,
+    inner: ParserErrorInner,
+}
+
+impl ParserError {
+    fn from_token_info_and_inner(token_info: TokenInfo, inner: ParserErrorInner) -> Self {
+        Self {
+            filename: token_info.filename,
+            line: token_info.line,
+            column: token_info.column,
+            inner,
+        }
+    }
+
+    fn expected_token(expected: Discriminant<Token>, token_info: TokenInfo) -> Self {
+        Self::from_token_info_and_inner(
+            token_info.clone(),
+            ParserErrorInner::ExpectedToken {
+                expected,
+                found: token_info.token,
+            },
+        )
+    }
+
+    fn unexpected_token(token_info: TokenInfo) -> Self {
+        Self::from_token_info_and_inner(
+            token_info.clone(),
+            ParserErrorInner::UnexpectedToken(token_info.token),
+        )
+    }
+}
+
+#[derive(Error, Debug, Clone)]
+enum ParserErrorInner {
+    #[error("expected token {expected:?}, found {found:?}")]
+    ExpectedToken {
+        expected: Discriminant<Token>,
+        found: Token,
+    },
+    #[error("unexpected token {0:?}")]
+    UnexpectedToken(Token),
+}
+
+#[derive(Error, Debug, Clone)]
+#[error("{errors:#?}")]
+pub struct ParserErrors {
+    errors: Vec<ParserError>,
+}
 
 pub struct Parser {
     lexer: Lexer,
     current_token_info: TokenInfo,
     peek_token_info: TokenInfo,
     errors: Vec<ParserError>,
+}
+
+// I can't believe I actually was able to do this
+macro_rules! expect_token {
+    (@instance $($path:ident)::*) => {
+        $($path)::*
+    };
+    (@instance $($path:ident)::*($args:tt)) => {
+        $($path)::*(expect_token!(@args $args))
+    };
+    (@args $($arg:pat),+) => {
+        $({ expect_token!(@ignore $arg); Default::default()}),+
+    };
+    (@ignore $arg:tt) => {};
+    ($self:ident, $($pattern:tt)+) => {
+        let $($pattern)+ = $self.peek_token_info.token.clone() else {
+            return Err(
+                ParserError::expected_token(
+                    discriminant(&expect_token!(@instance $($pattern)+)),
+                    $self.peek_token_info.clone()
+                )
+            );
+        };
+
+        $self.next_token();
+    };
 }
 
 impl Parser {
@@ -43,49 +124,54 @@ impl Parser {
         }
     }
 
-    pub fn parse_program(&mut self) -> Program {
-        let mut program = Program { statements: Vec::new() };
+    pub fn parse_program(&mut self) -> Result<Program, ParserErrors> {
+        let mut program = Program {
+            statements: Vec::new(),
+        };
 
         loop {
             if let Token::Eof = self.current_token_info.token {
                 break;
             }
-            if let Some(statement) = self.parse_statement() {
-                program.statements.push(statement);
+            match self.parse_statement() {
+                Ok(statement) => program.statements.push(statement),
+                Err(error) => self.errors.push(error),
             }
             self.next_token();
         }
 
-        program
-    }
-
-    fn parse_statement(&mut self) -> Option<AstStatement> {
-        match &self.current_token_info.token {
-            Token::Let => self.parse_let_statement(),
-            _ => None,
+        if self.errors.len() > 0 {
+            Err(ParserErrors {
+                errors: self.errors.clone(),
+            })
+        } else {
+            Ok(program)
         }
     }
 
-    fn parse_let_statement(&mut self) -> Option<AstStatement> {
-        let Token::Identifier(identifier) = self.peek_token_info.token.clone() else {
-            return None;
-        };
+    fn parse_statement(&mut self) -> Result<AstStatement, ParserError> {
+        match &self.current_token_info.token {
+            Token::Let => self.parse_let_statement(),
+            _ => Err(ParserError::unexpected_token(
+                self.current_token_info.clone(),
+            )),
+        }
+    }
 
-        self.next_token();
-        let Token::Assignment = self.peek_token_info.token else {
-            return None;
-        };
+    fn parse_let_statement(&mut self) -> Result<AstStatement, ParserError> {
+        expect_token!(self, Token::Identifier(identifier));
+        expect_token!(self, Token::Assignment);
 
-        self.next_token();
         loop {
             // Skip until next semicolon
             if let Token::Semicolon = self.peek_token_info.token {
+                self.next_token();
                 break;
             }
             self.next_token();
         }
-        
-        Some(AstStatement::Let(identifier, AstExpression::Integer(0)))
+
+        Ok(AstStatement::Let(identifier, AstExpression::Integer(0)))
     }
 
     fn next_token(&mut self) {
@@ -127,22 +213,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parser_let_statement() {
+    fn parser_let_statement() -> anyhow::Result<()> {
         let code = "let a = 3; let asdf = 4; let foobar = 1009348;";
         let identifiers = vec!["a", "asdf", "foobar"];
         let lexer = Lexer::from_code_str(code);
         let mut parser = Parser::with_lexer(lexer);
-        let program = parser.parse_program();
+        let program = parser.parse_program()?;
 
         assert_eq!(program.statements.len(), 3);
-        for (statement, expected) in
-            program.statements.into_iter().zip(identifiers.into_iter())
-        {
+        for (statement, expected) in program.statements.into_iter().zip(identifiers.into_iter()) {
             if let AstStatement::Let(identifier, _) = statement {
                 assert_eq!(identifier, expected);
             } else {
                 panic!("Should have been let statement, instead {:?}", statement);
             }
         }
+
+        Ok(())
     }
 }

@@ -77,7 +77,7 @@ impl Lexer {
         }
     }
 
-    fn tokenize_info(&mut self) -> anyhow::Result<Vec<TokenInfo>> {
+    pub fn tokenize_info(&mut self) -> anyhow::Result<Vec<TokenInfo>> {
         let mut token_infos = Vec::new();
         loop {
             let token_info = self.next_token_info();
@@ -199,7 +199,7 @@ impl Lexer {
         }
     }
 
-    fn next_token_info(&mut self) -> TokenInfo {
+    pub fn next_token_info(&mut self) -> TokenInfo {
         self.skip_whitespace();
 
         let line = self.line;
@@ -213,6 +213,93 @@ impl Lexer {
             line,
             column,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Program {
+    statements: Vec<AstStatement>,
+}
+
+#[derive(Clone, Debug)]
+enum AstStatement {
+    Let(String, AstExpression),
+    Invalid,
+}
+
+#[derive(Clone, Debug)]
+enum AstExpression {
+    Identifier(String),
+    Integer(u64),
+    Invalid,
+}
+
+pub struct Parser {
+    lexer: Lexer,
+    current_token_info: TokenInfo,
+    peek_token_info: TokenInfo,
+}
+
+impl Parser {
+    // TODO: Do this with iterators
+    pub fn with_lexer(mut lexer: Lexer) -> Self {
+        let current = lexer.next_token_info();
+        let peek = lexer.next_token_info();
+        Self {
+            lexer,
+            current_token_info: current,
+            peek_token_info: peek,
+        }
+    }
+
+    pub fn parse_program(&mut self) -> Program {
+        let mut program = Program { statements: Vec::new() };
+
+        loop {
+            if let Token::EOF = self.current_token_info.token {
+                break;
+            }
+            if let Some(statement) = self.parse_statement() {
+                program.statements.push(statement);
+            }
+            self.next_token();
+        }
+
+        program
+    }
+
+    fn parse_statement(&mut self) -> Option<AstStatement> {
+        match &self.current_token_info.token {
+            Token::Let => self.parse_let_statement(),
+            _ => None,
+        }
+    }
+
+    fn parse_let_statement(&mut self) -> Option<AstStatement> {
+        let Token::Identifier(identifier) = self.peek_token_info.token.clone() else {
+            return None;
+        };
+
+        self.next_token();
+        let Token::Assignment = self.peek_token_info.token else {
+            return None;
+        };
+
+        self.next_token();
+        loop {
+            // Skip until next semicolon
+            if let Token::Semicolon = self.peek_token_info.token {
+                break;
+            }
+            self.next_token();
+        }
+        
+        Some(AstStatement::Let(identifier, AstExpression::Integer(0)))
+    }
+
+    fn next_token(&mut self) {
+        std::mem::swap(&mut self.current_token_info, &mut self.peek_token_info);
+        self.peek_token_info = self.lexer.next_token_info();
     }
 }
 
@@ -352,6 +439,26 @@ let add = fn(x,y) {
         for expected in expected_tokens {
             let token_info = lexer.next_token_info();
             assert_eq!(token_info.token, expected);
+        }
+    }
+
+    #[test]
+    fn parser_let_statement() {
+        let code = "let a = 3; let asdf = 4; let foobar = 1009348;";
+        let identifiers = vec!["a", "asdf", "foobar"];
+        let mut lexer = Lexer::from_code_str(code);
+        let mut parser = Parser::with_lexer(lexer);
+        let program = parser.parse_program();
+
+        assert_eq!(program.statements.len(), 3);
+        for (statement, expected) in
+            program.statements.into_iter().zip(identifiers.into_iter())
+        {
+            if let AstStatement::Let(identifier, _) = statement {
+                assert_eq!(identifier, expected);
+            } else {
+                panic!("Should have been let statement, instead {:?}", statement);
+            }
         }
     }
 }

@@ -1,10 +1,9 @@
 use std::io::Write;
-use std::mem::{discriminant, Discriminant};
 
 use thiserror::Error;
 
 mod lexer;
-use lexer::{Lexer, Token, TokenInfo};
+use lexer::{Lexer, Token, TokenDiscriminants, TokenInfo};
 
 #[derive(Clone, Debug)]
 pub struct Program {
@@ -43,7 +42,7 @@ impl ParserError {
         }
     }
 
-    fn expected_token(expected: Discriminant<Token>, token_info: TokenInfo) -> Self {
+    fn expected_token(expected: TokenDiscriminants, token_info: TokenInfo) -> Self {
         Self::from_token_info_and_inner(
             token_info.clone(),
             ParserErrorInner::ExpectedToken {
@@ -65,7 +64,7 @@ impl ParserError {
 enum ParserErrorInner {
     #[error("expected token {expected:?}, found {found:?}")]
     ExpectedToken {
-        expected: Discriminant<Token>,
+        expected: TokenDiscriminants,
         found: Token,
     },
     #[error("unexpected token {0:?}")]
@@ -73,9 +72,17 @@ enum ParserErrorInner {
 }
 
 #[derive(Error, Debug, Clone)]
-#[error("{errors:#?}")]
 pub struct ParserErrors {
     errors: Vec<ParserError>,
+}
+
+impl std::fmt::Display for ParserErrors {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for error in self.errors.iter() {
+            write!(f, "{error}\n")?;
+        }
+        Ok(())
+    }
 }
 
 pub struct Parser {
@@ -101,7 +108,7 @@ macro_rules! expect_token {
         let $($pattern)+ = $self.peek_token_info.token.clone() else {
             return Err(
                 ParserError::expected_token(
-                    discriminant(&expect_token!(@instance $($pattern)+)),
+                    expect_token!(@instance $($pattern)+).into(),
                     $self.peek_token_info.clone()
                 )
             );
@@ -231,4 +238,6 @@ mod tests {
 
         Ok(())
     }
+
+
 }

@@ -1,3 +1,5 @@
+use strum::EnumDiscriminants;
+
 #[derive(Clone, Debug)]
 pub struct TokenInfo {
     pub token: Token,
@@ -6,7 +8,7 @@ pub struct TokenInfo {
     pub column: u32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, EnumDiscriminants)]
 pub enum Token {
     Illegal,
     Eof,

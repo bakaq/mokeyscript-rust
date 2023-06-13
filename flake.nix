@@ -18,7 +18,7 @@
           src = self;
           buildInputs = [
             (rust-bin.stable.latest.default.override {
-              extensions = [ "rust-src" "rust-analyzer" ];
+              extensions = [ "rust-src" "rust-analyzer" "llvm-tools-preview" ];
             })
           ];
         };

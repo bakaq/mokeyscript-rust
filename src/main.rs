@@ -33,7 +33,7 @@ enum AstStatement {
 #[derive(Clone, Debug, Display)]
 enum AstExpression {
     Identifier(String),
-    Integer(u64),
+    Integer(i64),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -71,6 +71,10 @@ impl ParserError {
             ParserErrorInner::UnexpectedToken(token_info.token),
         )
     }
+
+    fn invalid_integer(token_info: TokenInfo, value: String) -> Self {
+        Self::from_token_info_and_inner(token_info.clone(), ParserErrorInner::InvalidInteger(value))
+    }
 }
 
 #[derive(Error, Debug, Clone)]
@@ -82,6 +86,8 @@ enum ParserErrorInner {
     },
     #[error("unexpected token {0:?}")]
     UnexpectedToken(Token),
+    #[error("invalid integer {0}")]
+    InvalidInteger(String),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -258,13 +264,24 @@ impl Parser {
 
     fn register_operators(&mut self) {
         self.register_prefix(TokenDiscriminants::Identifier, |parser| {
-            return if
-                let Token::Identifier(ident_name) = parser.current_token_info.token.clone() 
-            {
+            return if let Token::Identifier(ident_name) = parser.current_token_info.token.clone() {
                 Ok(AstExpression::Identifier(ident_name))
             } else {
                 Err(ParserError::expected_token(
                     TokenDiscriminants::Identifier,
+                    parser.current_token_info.clone(),
+                ))
+            };
+        });
+
+        self.register_prefix(TokenDiscriminants::Integer, |parser| {
+            return if let Token::Integer(value) = parser.current_token_info.token.clone() {
+                Ok(AstExpression::Integer(value.parse().map_err(|_| {
+                    ParserError::invalid_integer(parser.current_token_info.clone(), value)
+                })?))
+            } else {
+                Err(ParserError::expected_token(
+                    TokenDiscriminants::Integer,
                     parser.current_token_info.clone(),
                 ))
             };
@@ -372,6 +389,25 @@ mod tests {
         );
 
         assert_eq!(ident_name, "foobar");
+
+        Ok(())
+    }
+
+    #[test]
+    fn parser_integer_expression() -> anyhow::Result<()> {
+        let code = "5;";
+        let lexer = Lexer::from_code_str(code);
+        let mut parser = Parser::with_lexer(lexer);
+        let program = parser.parse_program()?;
+
+        assert_eq!(program.statements.len(), 1);
+        let value = assert_matches!(&program.statements[0],
+           AstStatement::ExpressionStatement(
+               AstExpression::Integer(value)
+           ) => value
+        );
+
+        assert_eq!(*value, 5);
 
         Ok(())
     }

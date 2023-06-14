@@ -221,7 +221,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lexer_simple_tokens() {
+    fn simple_tokens() {
         let code = "+=(){},;";
         let expected_tokens = {
             use Token::*;
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn lexer_basic_code() {
+    fn basic_code() {
         let code = "let five = 5;
 let add = fn(x,y) {
     x + y;
@@ -286,7 +286,7 @@ let add = fn(x,y) {
     }
 
     #[test]
-    fn lexer_operators() {
+    fn operators() {
         let code = "+-*/<>!";
         let expected_tokens = {
             use Token::*;
@@ -300,7 +300,7 @@ let add = fn(x,y) {
     }
 
     #[test]
-    fn lexer_keywords() {
+    fn keywords() {
         let code = "true false fn return if else let";
         let expected_tokens = {
             use Token::*;
@@ -314,7 +314,7 @@ let add = fn(x,y) {
     }
 
     #[test]
-    fn lexer_two_character_operators() {
+    fn two_character_operators() {
         let code = "== !=";
         let expected_tokens = {
             use Token::*;

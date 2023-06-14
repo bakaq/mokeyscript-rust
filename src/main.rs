@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use assert_matches::assert_matches;
 use thiserror::Error;
 
 mod lexer;
@@ -13,14 +14,13 @@ pub struct Program {
 #[derive(Clone, Debug)]
 enum AstStatement {
     Let(String, AstExpression),
-    Invalid,
+    Return(AstExpression),
 }
 
 #[derive(Clone, Debug)]
 enum AstExpression {
     Identifier(String),
     Integer(u64),
-    Invalid,
 }
 
 #[derive(Error, Debug, Clone)]
@@ -159,6 +159,7 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<AstStatement, ParserError> {
         match &self.current_token_info.token {
             Token::Let => self.parse_let_statement(),
+            Token::Return => self.parse_return_statement(),
             _ => Err(ParserError::unexpected_token(
                 self.current_token_info.clone(),
             )),
@@ -171,14 +172,25 @@ impl Parser {
 
         loop {
             // Skip until next semicolon
-            if let Token::Semicolon = self.peek_token_info.token {
-                self.next_token();
+            self.next_token();
+            if let Token::Semicolon = self.current_token_info.token {
                 break;
             }
-            self.next_token();
         }
 
         Ok(AstStatement::Let(identifier, AstExpression::Integer(0)))
+    }
+
+    fn parse_return_statement(&mut self) -> Result<AstStatement, ParserError> {
+        loop {
+            // Skip until next semicolon
+            self.next_token();
+            if let Token::Semicolon = self.current_token_info.token {
+                break;
+            }
+        }
+
+        Ok(AstStatement::Return(AstExpression::Integer(0)))
     }
 
     fn next_token(&mut self) {
@@ -229,15 +241,26 @@ mod tests {
 
         assert_eq!(program.statements.len(), 3);
         for (statement, expected) in program.statements.into_iter().zip(identifiers.into_iter()) {
-            if let AstStatement::Let(identifier, _) = statement {
-                assert_eq!(identifier, expected);
-            } else {
-                panic!("Should have been let statement, instead {:?}", statement);
-            }
+            let identifier =
+                assert_matches!(statement, AstStatement::Let(identifier, _) => identifier);
+            assert_eq!(identifier, expected);
         }
 
         Ok(())
     }
 
+    #[test]
+    fn parser_return_statement() -> anyhow::Result<()> {
+        let code = "return 3; return 4; return 35325;";
+        let lexer = Lexer::from_code_str(code);
+        let mut parser = Parser::with_lexer(lexer);
+        let program = parser.parse_program()?;
 
+        assert_eq!(program.statements.len(), 3);
+        for statement in program.statements {
+            assert_matches!(statement, AstStatement::Return(_));
+        }
+
+        Ok(())
+    }
 }

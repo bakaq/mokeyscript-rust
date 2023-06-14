@@ -21,6 +21,14 @@ impl std::fmt::Display for Program {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+enum PrefixOperation {
+    #[display(fmt = "!")]
+    BooleanNegation,
+    #[display(fmt = "-")]
+    UnaryMinus,
+}
+
 #[derive(Clone, Debug, Display)]
 enum AstStatement {
     #[display(fmt = "let {_0} = {_1};")]
@@ -34,6 +42,8 @@ enum AstStatement {
 enum AstExpression {
     Identifier(String),
     Integer(i64),
+    #[display(fmt = "({_0}{_1})")]
+    PrefixExpression(PrefixOperation, Box<AstExpression>),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -65,6 +75,16 @@ impl ParserError {
         )
     }
 
+    fn expected_tokens(expected: &[TokenDiscriminants], token_info: TokenInfo) -> Self {
+        Self::from_token_info_and_inner(
+            token_info.clone(),
+            ParserErrorInner::ExpectedTokens {
+                expected: expected.into(),
+                found: token_info.token,
+            },
+        )
+    }
+
     fn unexpected_token(token_info: TokenInfo) -> Self {
         Self::from_token_info_and_inner(
             token_info.clone(),
@@ -78,6 +98,13 @@ impl ParserError {
             ParserErrorInner::InvalidInteger(value),
         )
     }
+
+    fn no_prefix_parse_fn(token_info: TokenInfo) -> Self {
+        Self::from_token_info_and_inner(
+            token_info.clone(),
+            ParserErrorInner::NoPrefixParseFn(token_info.token),
+        )
+    }
 }
 
 #[derive(Error, Debug, Clone)]
@@ -87,10 +114,17 @@ enum ParserErrorInner {
         expected: TokenDiscriminants,
         found: Token,
     },
+    #[error("expected one of the tokens {expected:?}, found {found:?}")]
+    ExpectedTokens {
+        expected: Vec<TokenDiscriminants>,
+        found: Token,
+    },
     #[error("unexpected token {0:?}")]
     UnexpectedToken(Token),
     #[error("invalid integer {0}")]
     InvalidInteger(String),
+    #[error("no prefix parse function for token {0:?}")]
+    NoPrefixParseFn(Token),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -183,8 +217,7 @@ impl Parser {
                 break;
             }
             match self.parse_statement() {
-                Ok(Some(statement)) => program.statements.push(statement),
-                Ok(None) => {}
+                Ok(statement) => program.statements.push(statement),
                 Err(error) => self.errors.push(error),
             }
             self.next_token();
@@ -215,10 +248,10 @@ impl Parser {
         self.infix_parse_fns.insert(token_discriminant, infix_fn);
     }
 
-    fn parse_statement(&mut self) -> Result<Option<AstStatement>, ParserError> {
+    fn parse_statement(&mut self) -> Result<AstStatement, ParserError> {
         match &self.current_token_info.token {
-            Token::Let => self.parse_let_statement().map(|x| Some(x)),
-            Token::Return => self.parse_return_statement().map(|x| Some(x)),
+            Token::Let => self.parse_let_statement(),
+            Token::Return => self.parse_return_statement(),
             _ => self.parse_expression_statement(),
         }
     }
@@ -250,35 +283,33 @@ impl Parser {
         Ok(AstStatement::Return(AstExpression::Integer(0)))
     }
 
-    fn parse_expression_statement(
-        &mut self,
-    ) -> Result<Option<AstStatement>, ParserError> {
+    fn parse_expression_statement(&mut self) -> Result<AstStatement, ParserError> {
         let expression = self.parse_expression(Precedence::Lowest)?;
 
+        self.next_token();
         if let Token::Semicolon = self.current_token_info.token {
-            self.next_token()
+            self.next_token();
         }
 
-        let statement = expression.map(|e| AstStatement::ExpressionStatement(e));
-        return Ok(statement);
+        return Ok(AstStatement::ExpressionStatement(expression));
     }
 
     fn parse_expression(
         &mut self,
         precedence: Precedence,
-    ) -> Result<Option<AstExpression>, ParserError> {
-        return self
+    ) -> Result<AstExpression, ParserError> {
+        let prefix_parse_fn = self
             .prefix_parse_fns
             .get(&self.current_token_info.token.clone().into())
-            .copied()
-            .map(|f| f(self))
-            .transpose();
+            .ok_or(ParserError::no_prefix_parse_fn(
+                self.current_token_info.clone(),
+            ))?;
+        return prefix_parse_fn(self);
     }
 
     fn register_operators(&mut self) {
         self.register_prefix(TokenDiscriminants::Identifier, |parser| {
-            return if let Token::Identifier(ident_name) =
-                parser.current_token_info.token.clone()
+            if let Token::Identifier(ident_name) = parser.current_token_info.token.clone()
             {
                 Ok(AstExpression::Identifier(ident_name))
             } else {
@@ -286,12 +317,11 @@ impl Parser {
                     TokenDiscriminants::Identifier,
                     parser.current_token_info.clone(),
                 ))
-            };
+            }
         });
 
         self.register_prefix(TokenDiscriminants::Integer, |parser| {
-            return if let Token::Integer(value) = parser.current_token_info.token.clone()
-            {
+            if let Token::Integer(value) = parser.current_token_info.token.clone() {
                 Ok(AstExpression::Integer(value.parse().map_err(|_| {
                     ParserError::invalid_integer(parser.current_token_info.clone(), value)
                 })?))
@@ -300,8 +330,25 @@ impl Parser {
                     TokenDiscriminants::Integer,
                     parser.current_token_info.clone(),
                 ))
-            };
+            }
         });
+
+        let parse_prefix_expr = |parser: &mut Parser| {
+            let op = match parser.current_token_info.token {
+                Token::Bang => PrefixOperation::BooleanNegation,
+                Token::Minus => PrefixOperation::UnaryMinus,
+                _ => Err(ParserError::expected_tokens(
+                    &[Token::Bang.into(), Token::Minus.into()],
+                    parser.current_token_info.clone(),
+                ))?,
+            };
+            parser.next_token();
+            let expression = parser.parse_expression(Precedence::Prefix)?;
+            Ok(AstExpression::PrefixExpression(op, Box::new(expression)))
+        };
+
+        self.register_prefix(TokenDiscriminants::Bang, parse_prefix_expr);
+        self.register_prefix(TokenDiscriminants::Minus, parse_prefix_expr);
     }
 
     fn next_token(&mut self) {
@@ -425,6 +472,35 @@ mod tests {
         );
 
         assert_eq!(*value, 5);
+
+        Ok(())
+    }
+
+    #[test]
+    fn parser_prefix_expression_bang() -> anyhow::Result<()> {
+        let cases = [
+            ("!5;", PrefixOperation::BooleanNegation, 5),
+            ("-15;", PrefixOperation::UnaryMinus, 15),
+        ];
+
+        for (code, expected_op, expected_expr_int) in cases {
+            let lexer = Lexer::from_code_str(code);
+            let mut parser = Parser::with_lexer(lexer);
+            let program = parser.parse_program()?;
+
+            assert_eq!(program.statements.len(), 1);
+            let (op, expr) = assert_matches!(&program.statements[0],
+                AstStatement::ExpressionStatement(
+                    AstExpression::PrefixExpression(op, expr)
+                ) => (op, expr)
+            );
+
+            assert_eq!(*op, expected_op);
+            let expr_int = assert_matches!(**expr,
+                AstExpression::Integer(expr_int) => expr_int
+            );
+            assert_eq!(expr_int, expected_expr_int);
+        }
 
         Ok(())
     }

@@ -8,7 +8,8 @@ pub struct TokenInfo {
     pub column: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, EnumDiscriminants)]
+#[derive(Clone, Debug, PartialEq, Eq, EnumDiscriminants, Hash)]
+#[strum_discriminants(derive(Hash))]
 pub enum Token {
     Illegal,
     Eof,

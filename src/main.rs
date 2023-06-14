@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 
 use derive_more::Display;
@@ -97,11 +98,27 @@ impl std::fmt::Display for ParserErrors {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+enum Precedence {
+    Lowest,
+    Equals,
+    LessGreater,
+    Sum,
+    Product,
+    Prefix,
+    Call,
+}
+
+type PrefixFn = fn(&mut Parser) -> Result<AstExpression, ParserError>;
+type InfixFn = fn(&mut Parser, AstExpression) -> Result<AstExpression, ParserError>;
+
 pub struct Parser {
     lexer: Lexer,
     current_token_info: TokenInfo,
     peek_token_info: TokenInfo,
     errors: Vec<ParserError>,
+    prefix_parse_fns: HashMap<TokenDiscriminants, PrefixFn>,
+    infix_parse_fns: HashMap<TokenDiscriminants, InfixFn>,
 }
 
 // I can't believe I actually was able to do this
@@ -135,12 +152,16 @@ impl Parser {
     pub fn with_lexer(mut lexer: Lexer) -> Self {
         let current = lexer.next_token_info();
         let peek = lexer.next_token_info();
-        Self {
+        let mut parser = Self {
             lexer,
             current_token_info: current,
             peek_token_info: peek,
             errors: Vec::new(),
-        }
+            prefix_parse_fns: HashMap::new(),
+            infix_parse_fns: HashMap::new(),
+        };
+        parser.register_operators();
+        parser
     }
 
     pub fn parse_program(&mut self) -> Result<Program, ParserErrors> {
@@ -153,7 +174,8 @@ impl Parser {
                 break;
             }
             match self.parse_statement() {
-                Ok(statement) => program.statements.push(statement),
+                Ok(Some(statement)) => program.statements.push(statement),
+                Ok(None) => {}
                 Err(error) => self.errors.push(error),
             }
             self.next_token();
@@ -168,13 +190,19 @@ impl Parser {
         }
     }
 
-    fn parse_statement(&mut self) -> Result<AstStatement, ParserError> {
+    fn register_prefix(&mut self, token_discriminant: TokenDiscriminants, prefix_fn: PrefixFn) {
+        self.prefix_parse_fns.insert(token_discriminant, prefix_fn);
+    }
+
+    fn register_infix(&mut self, token_discriminant: TokenDiscriminants, infix_fn: InfixFn) {
+        self.infix_parse_fns.insert(token_discriminant, infix_fn);
+    }
+
+    fn parse_statement(&mut self) -> Result<Option<AstStatement>, ParserError> {
         match &self.current_token_info.token {
-            Token::Let => self.parse_let_statement(),
-            Token::Return => self.parse_return_statement(),
-            _ => Err(ParserError::unexpected_token(
-                self.current_token_info.clone(),
-            )),
+            Token::Let => self.parse_let_statement().map(|x| Some(x)),
+            Token::Return => self.parse_return_statement().map(|x| Some(x)),
+            _ => self.parse_expression_statement(),
         }
     }
 
@@ -203,6 +231,44 @@ impl Parser {
         }
 
         Ok(AstStatement::Return(AstExpression::Integer(0)))
+    }
+
+    fn parse_expression_statement(&mut self) -> Result<Option<AstStatement>, ParserError> {
+        let expression = self.parse_expression(Precedence::Lowest)?;
+
+        if let Token::Semicolon = self.current_token_info.token {
+            self.next_token()
+        }
+
+        let statement = expression.map(|e| AstStatement::ExpressionStatement(e));
+        return Ok(statement);
+    }
+
+    fn parse_expression(
+        &mut self,
+        precedence: Precedence,
+    ) -> Result<Option<AstExpression>, ParserError> {
+        return self
+            .prefix_parse_fns
+            .get(&self.current_token_info.token.clone().into())
+            .copied()
+            .map(|f| f(self))
+            .transpose();
+    }
+
+    fn register_operators(&mut self) {
+        self.register_prefix(TokenDiscriminants::Identifier, |parser| {
+            return if
+                let Token::Identifier(ident_name) = parser.current_token_info.token.clone() 
+            {
+                Ok(AstExpression::Identifier(ident_name))
+            } else {
+                Err(ParserError::expected_token(
+                    TokenDiscriminants::Identifier,
+                    parser.current_token_info.clone(),
+                ))
+            };
+        });
     }
 
     fn next_token(&mut self) {
@@ -288,6 +354,25 @@ mod tests {
         };
 
         assert_eq!(&program.to_string(), code);
+        Ok(())
+    }
+
+    #[test]
+    fn parser_identifier_expression() -> anyhow::Result<()> {
+        let code = "foobar;";
+        let lexer = Lexer::from_code_str(code);
+        let mut parser = Parser::with_lexer(lexer);
+        let program = parser.parse_program()?;
+
+        assert_eq!(program.statements.len(), 1);
+        let ident_name = assert_matches!(&program.statements[0],
+           AstStatement::ExpressionStatement(
+               AstExpression::Identifier(ident_name)
+           ) => ident_name
+        );
+
+        assert_eq!(ident_name, "foobar");
+
         Ok(())
     }
 }

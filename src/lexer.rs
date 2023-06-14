@@ -146,6 +146,7 @@ impl Lexer {
                 self.next_char();
                 consume_char = false;
                 if let Some('=') = self.peek_next_char() {
+                    self.next_char();
                     NotEqual
                 } else {
                     Bang
@@ -328,5 +329,7 @@ let add = fn(x,y) {
             let token_info = lexer.next_token_info();
             assert_eq!(token_info.token, expected);
         }
+        let end = lexer.next_token_info();
+        assert_eq!(end.token, Token::Eof);
     }
 }

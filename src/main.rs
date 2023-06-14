@@ -29,6 +29,75 @@ enum PrefixOperation {
     UnaryMinus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+enum InfixOperation {
+    #[display(fmt = "+")]
+    Plus,
+    #[display(fmt = "-")]
+    Minus,
+    #[display(fmt = "*")]
+    Multiplication,
+    #[display(fmt = "/")]
+    Division,
+    #[display(fmt = ">")]
+    GreaterThan,
+    #[display(fmt = "<")]
+    LessThan,
+    #[display(fmt = "==")]
+    Equals,
+    #[display(fmt = "!=")]
+    NotEquals,
+}
+
+impl InfixOperation {
+    fn get_precedence(&self) -> Precedence {
+        use Precedence::*;
+        match self {
+            InfixOperation::Plus => Sum,
+            InfixOperation::Minus => Sum,
+            InfixOperation::Multiplication => Product,
+            InfixOperation::Division => Product,
+            InfixOperation::GreaterThan => LessGreater,
+            InfixOperation::LessThan => LessGreater,
+            InfixOperation::Equals => Equals,
+            InfixOperation::NotEquals => Equals,
+        }
+    }
+
+    fn get_infix_tokens() -> Vec<TokenDiscriminants> {
+        use TokenDiscriminants::*;
+        vec![
+            Plus,
+            Minus,
+            Slash,
+            Asterisk,
+            GreaterThan,
+            LessThan,
+            Equal,
+            NotEqual,
+        ]
+    }
+}
+
+impl TryFrom<Token> for InfixOperation {
+    type Error = String;
+
+    fn try_from(value: Token) -> Result<Self, Self::Error> {
+        use InfixOperation::*;
+        Ok(match value {
+            Token::Plus => Plus,
+            Token::Minus => Minus,
+            Token::Slash => Division,
+            Token::Asterisk => Multiplication,
+            Token::GreaterThan => GreaterThan,
+            Token::LessThan => LessThan,
+            Token::Equal => Equals,
+            Token::NotEqual => NotEquals,
+            _ => Err("token is not a infix operator")?,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Display)]
 enum AstStatement {
     #[display(fmt = "let {_0} = {_1};")]
@@ -44,6 +113,8 @@ enum AstExpression {
     Integer(i64),
     #[display(fmt = "({_0}{_1})")]
     PrefixExpression(PrefixOperation, Box<AstExpression>),
+    #[display(fmt = "({_0} {_1} {_2})")]
+    InfixExpression(Box<AstExpression>, InfixOperation, Box<AstExpression>),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -85,16 +156,9 @@ impl ParserError {
         )
     }
 
-    fn unexpected_token(token_info: TokenInfo) -> Self {
-        Self::from_token_info_and_inner(
-            token_info.clone(),
-            ParserErrorInner::UnexpectedToken(token_info.token),
-        )
-    }
-
     fn invalid_integer(token_info: TokenInfo, value: String) -> Self {
         Self::from_token_info_and_inner(
-            token_info.clone(),
+            token_info,
             ParserErrorInner::InvalidInteger(value),
         )
     }
@@ -119,8 +183,6 @@ enum ParserErrorInner {
         expected: Vec<TokenDiscriminants>,
         found: Token,
     },
-    #[error("unexpected token {0:?}")]
-    UnexpectedToken(Token),
     #[error("invalid integer {0}")]
     InvalidInteger(String),
     #[error("no prefix parse function for token {0:?}")]
@@ -149,7 +211,7 @@ enum Precedence {
     Sum,
     Product,
     Prefix,
-    Call,
+    //Call,
 }
 
 type PrefixFn = fn(&mut Parser) -> Result<AstExpression, ParserError>;
@@ -286,25 +348,41 @@ impl Parser {
     fn parse_expression_statement(&mut self) -> Result<AstStatement, ParserError> {
         let expression = self.parse_expression(Precedence::Lowest)?;
 
-        self.next_token();
-        if let Token::Semicolon = self.current_token_info.token {
+        if let Token::Semicolon = self.peek_token_info.token {
             self.next_token();
         }
 
-        return Ok(AstStatement::ExpressionStatement(expression));
+        Ok(AstStatement::ExpressionStatement(expression))
     }
 
     fn parse_expression(
         &mut self,
         precedence: Precedence,
     ) -> Result<AstExpression, ParserError> {
+        println!("--{:?} {:?}", self.current_token_info, precedence);
         let prefix_parse_fn = self
             .prefix_parse_fns
             .get(&self.current_token_info.token.clone().into())
-            .ok_or(ParserError::no_prefix_parse_fn(
-                self.current_token_info.clone(),
-            ))?;
-        return prefix_parse_fn(self);
+            .ok_or_else(|| {
+                ParserError::no_prefix_parse_fn(self.current_token_info.clone())
+            })?;
+        let mut left_expression = prefix_parse_fn(self);
+
+        let peek_semicolon = matches!(self.peek_token_info.token, Token::Semicolon);
+
+        while !peek_semicolon && precedence < self.peek_precedence() {
+            let infix_parse_fn = self
+                .infix_parse_fns
+                .get(&self.peek_token_info.token.clone().into())
+                .cloned();
+            if let Some(infix) = infix_parse_fn {
+                self.next_token();
+                left_expression = infix(self, left_expression.clone()?);
+            } else {
+                break;
+            }
+        }
+        left_expression
     }
 
     fn register_operators(&mut self) {
@@ -349,11 +427,59 @@ impl Parser {
 
         self.register_prefix(TokenDiscriminants::Bang, parse_prefix_expr);
         self.register_prefix(TokenDiscriminants::Minus, parse_prefix_expr);
+
+        let parse_infix_expr = |parser: &mut Parser, left| {
+            let precedence = parser.current_precedence();
+            let op: InfixOperation = parser
+                .current_token_info
+                .token
+                .clone()
+                .try_into()
+                .map_err(|_| {
+                ParserError::expected_tokens(
+                    &InfixOperation::get_infix_tokens(),
+                    parser.current_token_info.clone(),
+                )
+            })?;
+            parser.next_token();
+            let right = parser.parse_expression(precedence)?;
+            Ok(AstExpression::InfixExpression(
+                Box::new(left),
+                op,
+                Box::new(right),
+            ))
+        };
+
+        for token in InfixOperation::get_infix_tokens() {
+            self.register_infix(token, parse_infix_expr);
+        }
     }
 
     fn next_token(&mut self) {
+        //println!("Current: {:?}", self.current_token_info);
         std::mem::swap(&mut self.current_token_info, &mut self.peek_token_info);
         self.peek_token_info = self.lexer.next_token_info();
+    }
+
+    fn current_precedence(&mut self) -> Precedence {
+        self.current_token_info
+            .token
+            .clone()
+            .try_into()
+            .map(|op: InfixOperation| {
+                
+                op.get_precedence()
+            })
+            .unwrap_or(Precedence::Lowest)
+    }
+
+    fn peek_precedence(&mut self) -> Precedence {
+        self.peek_token_info
+            .token
+            .clone()
+            .try_into()
+            .map(|op: InfixOperation| op.get_precedence())
+            .unwrap_or(Precedence::Lowest)
     }
 }
 
@@ -477,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_prefix_expression_bang() -> anyhow::Result<()> {
+    fn parser_prefix_expression() -> anyhow::Result<()> {
         let cases = [
             ("!5;", PrefixOperation::BooleanNegation, 5),
             ("-15;", PrefixOperation::UnaryMinus, 15),
@@ -502,6 +628,67 @@ mod tests {
             assert_eq!(expr_int, expected_expr_int);
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn parser_infix_expressions() -> anyhow::Result<()> {
+        let cases = [
+            ("5 + 5;", 5, InfixOperation::Plus, 5),
+            ("5 - 5;", 5, InfixOperation::Minus, 5),
+            ("5 * 5;", 5, InfixOperation::Multiplication, 5),
+            ("5 / 5;", 5, InfixOperation::Division, 5),
+            ("5 > 5;", 5, InfixOperation::GreaterThan, 5),
+            ("5 < 5;", 5, InfixOperation::LessThan, 5),
+            ("5 == 5;", 5, InfixOperation::Equals, 5),
+            ("5 != 5;", 5, InfixOperation::NotEquals, 5),
+        ];
+
+        for (code, expected_int_left, expected_op, expected_int_right) in cases {
+            let lexer = Lexer::from_code_str(code);
+            let mut parser = Parser::with_lexer(lexer);
+            let program = parser.parse_program()?;
+
+            assert_eq!(program.statements.len(), 1);
+            let (expr_left, op, expr_right) = assert_matches!(&program.statements[0],
+                AstStatement::ExpressionStatement(
+                    AstExpression::InfixExpression(expr_left, op, expr_right)
+                ) => (expr_left, op, expr_right)
+            );
+
+            assert_eq!(*op, expected_op);
+
+            let int_left = assert_matches!(**expr_left,
+                AstExpression::Integer(int_left) => int_left
+            );
+            assert_eq!(int_left, expected_int_left);
+
+            let int_right = assert_matches!(**expr_right,
+                AstExpression::Integer(int_right) => int_right
+            );
+            assert_eq!(int_right, expected_int_right);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn parser_operator_precedence() -> anyhow::Result<()> {
+        let cases = [
+            ("-a * b", "((-a) * b)"),
+            ("!-a", "(!(-a))"),
+            ("a + b + c", "((a + b) + c)"),
+            ("a + b / c", "(a + (b / c))"),
+            ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
+        ];
+
+        for (code, expected) in cases {
+            println!("Case: {}", code);
+            let lexer = Lexer::from_code_str(code);
+            let mut parser = Parser::with_lexer(lexer);
+            let program = parser.parse_program()?;
+            assert_eq!(&program.to_string(), expected);
+        }
         Ok(())
     }
 }

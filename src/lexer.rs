@@ -187,7 +187,9 @@ impl Lexer {
 
     fn read_word(&mut self) -> String {
         let mut word: String = "".into();
-        while let Some(current_char @ ('a'..='z' | 'A'..='Z' | '_')) = self.peek_next_char() {
+        while let Some(current_char @ ('a'..='z' | 'A'..='Z' | '_')) =
+            self.peek_next_char()
+        {
             word.push(current_char);
             self.next_char();
         }

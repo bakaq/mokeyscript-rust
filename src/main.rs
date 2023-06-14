@@ -73,7 +73,10 @@ impl ParserError {
     }
 
     fn invalid_integer(token_info: TokenInfo, value: String) -> Self {
-        Self::from_token_info_and_inner(token_info.clone(), ParserErrorInner::InvalidInteger(value))
+        Self::from_token_info_and_inner(
+            token_info.clone(),
+            ParserErrorInner::InvalidInteger(value),
+        )
     }
 }
 
@@ -196,11 +199,19 @@ impl Parser {
         }
     }
 
-    fn register_prefix(&mut self, token_discriminant: TokenDiscriminants, prefix_fn: PrefixFn) {
+    fn register_prefix(
+        &mut self,
+        token_discriminant: TokenDiscriminants,
+        prefix_fn: PrefixFn,
+    ) {
         self.prefix_parse_fns.insert(token_discriminant, prefix_fn);
     }
 
-    fn register_infix(&mut self, token_discriminant: TokenDiscriminants, infix_fn: InfixFn) {
+    fn register_infix(
+        &mut self,
+        token_discriminant: TokenDiscriminants,
+        infix_fn: InfixFn,
+    ) {
         self.infix_parse_fns.insert(token_discriminant, infix_fn);
     }
 
@@ -239,7 +250,9 @@ impl Parser {
         Ok(AstStatement::Return(AstExpression::Integer(0)))
     }
 
-    fn parse_expression_statement(&mut self) -> Result<Option<AstStatement>, ParserError> {
+    fn parse_expression_statement(
+        &mut self,
+    ) -> Result<Option<AstStatement>, ParserError> {
         let expression = self.parse_expression(Precedence::Lowest)?;
 
         if let Token::Semicolon = self.current_token_info.token {
@@ -264,7 +277,9 @@ impl Parser {
 
     fn register_operators(&mut self) {
         self.register_prefix(TokenDiscriminants::Identifier, |parser| {
-            return if let Token::Identifier(ident_name) = parser.current_token_info.token.clone() {
+            return if let Token::Identifier(ident_name) =
+                parser.current_token_info.token.clone()
+            {
                 Ok(AstExpression::Identifier(ident_name))
             } else {
                 Err(ParserError::expected_token(
@@ -275,7 +290,8 @@ impl Parser {
         });
 
         self.register_prefix(TokenDiscriminants::Integer, |parser| {
-            return if let Token::Integer(value) = parser.current_token_info.token.clone() {
+            return if let Token::Integer(value) = parser.current_token_info.token.clone()
+            {
                 Ok(AstExpression::Integer(value.parse().map_err(|_| {
                     ParserError::invalid_integer(parser.current_token_info.clone(), value)
                 })?))
@@ -336,9 +352,10 @@ mod tests {
         let program = parser.parse_program()?;
 
         assert_eq!(program.statements.len(), 3);
-        for (statement, expected) in program.statements.into_iter().zip(identifiers.into_iter()) {
-            let identifier =
-                assert_matches!(statement, AstStatement::Let(identifier, _) => identifier);
+        for (statement, expected) in
+            program.statements.into_iter().zip(identifiers.into_iter())
+        {
+            let identifier = assert_matches!(statement, AstStatement::Let(identifier, _) => identifier);
             assert_eq!(identifier, expected);
         }
 

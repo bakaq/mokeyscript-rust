@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use assert_matches::assert_matches;
+use derive_more::Display;
 use thiserror::Error;
 
 mod lexer;
@@ -11,13 +11,25 @@ pub struct Program {
     statements: Vec<AstStatement>,
 }
 
-#[derive(Clone, Debug)]
-enum AstStatement {
-    Let(String, AstExpression),
-    Return(AstExpression),
+impl std::fmt::Display for Program {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for statement in &self.statements {
+            write!(f, "{}", statement)?;
+        }
+        Ok(())
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Display)]
+enum AstStatement {
+    #[display(fmt = "let {_0} = {_1};")]
+    Let(String, AstExpression),
+    #[display(fmt = "return {_0};")]
+    Return(AstExpression),
+    ExpressionStatement(AstExpression),
+}
+
+#[derive(Clone, Debug, Display)]
 enum AstExpression {
     Identifier(String),
     Integer(u64),
@@ -79,7 +91,7 @@ pub struct ParserErrors {
 impl std::fmt::Display for ParserErrors {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for error in self.errors.iter() {
-            write!(f, "{error}\n")?;
+            writeln!(f, "{error}")?;
         }
         Ok(())
     }
@@ -147,7 +159,7 @@ impl Parser {
             self.next_token();
         }
 
-        if self.errors.len() > 0 {
+        if !self.errors.is_empty() {
             Err(ParserErrors {
                 errors: self.errors.clone(),
             })
@@ -230,6 +242,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert_matches::assert_matches;
 
     #[test]
     fn parser_let_statement() -> anyhow::Result<()> {
@@ -261,6 +274,20 @@ mod tests {
             assert_matches!(statement, AstStatement::Return(_));
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn parser_display() -> anyhow::Result<()> {
+        let code = "let myVar = anotherVar;";
+        let program = Program {
+            statements: vec![AstStatement::Let(
+                "myVar".into(),
+                AstExpression::Identifier("anotherVar".into()),
+            )],
+        };
+
+        assert_eq!(&program.to_string(), code);
         Ok(())
     }
 }

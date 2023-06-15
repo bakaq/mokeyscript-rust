@@ -59,6 +59,7 @@ impl Token {
     }
 }
 
+// TODO: Reimplement as a iterator
 pub struct Lexer {
     code: Vec<char>,
     filename: String,

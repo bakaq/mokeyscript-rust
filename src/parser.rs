@@ -215,6 +215,8 @@ enum Precedence {
 type PrefixFn = fn(&mut Parser) -> Result<AstExpression, ParserError>;
 type InfixFn = fn(&mut Parser, AstExpression) -> Result<AstExpression, ParserError>;
 
+// TODO: Accumulate parsing errors in errors field instead of returning them from functions
+// as we can show more errors for the user that way
 pub struct Parser {
     lexer: Lexer,
     current_token_info: TokenInfo,

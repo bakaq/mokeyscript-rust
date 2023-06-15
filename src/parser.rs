@@ -468,6 +468,25 @@ impl Parser {
         for token in InfixOperation::get_infix_tokens() {
             self.register_infix(token, parse_infix_expr);
         }
+
+        self.register_prefix(TokenDiscriminants::LeftParenthesis, |parser| {
+            matches!(parser.current_token_info.token, Token::LeftParenthesis)
+                .then_some(())
+                .ok_or(ParserError::expected_token(
+                    TokenDiscriminants::LeftParenthesis,
+                    parser.current_token_info.clone(),
+                ))?;
+            parser.next_token();
+            let expr = parser.parse_expression(Precedence::Lowest)?;
+            matches!(parser.peek_token_info.token, Token::RightParenthesis)
+                .then_some(())
+                .ok_or(ParserError::expected_token(
+                    TokenDiscriminants::RightParenthesis,
+                    parser.current_token_info.clone(),
+                ))?;
+            parser.next_token();
+            Ok(expr)
+        });
     }
 
     fn next_token(&mut self) {
@@ -497,6 +516,7 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
+    // TODO: Test errors
     use super::*;
     use assert_matches::assert_matches;
 
@@ -684,6 +704,8 @@ mod tests {
             ("a + b + c", "((a + b) + c)"),
             ("a + b / c", "(a + (b / c))"),
             ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
+            ("1 + (2 + 3) + 4", "((1 + (2 + 3)) + 4)"),
+            ("(1 + 2) * 3", "((1 + 2) * 3)"),
         ];
 
         for (code, expected) in cases {

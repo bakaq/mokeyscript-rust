@@ -109,6 +109,7 @@ enum AstStatement {
 enum AstExpression {
     Identifier(String),
     Integer(i64),
+    Boolean(bool),
     #[display(fmt = "({_0}{_1})")]
     PrefixExpression(PrefixOperation, Box<AstExpression>),
     #[display(fmt = "({_0} {_1} {_2})")]
@@ -359,7 +360,6 @@ impl Parser {
         &mut self,
         precedence: Precedence,
     ) -> Result<AstExpression, ParserError> {
-        println!("--{:?} {:?}", self.current_token_info, precedence);
         let prefix_parse_fn = self
             .prefix_parse_fns
             .get(&self.current_token_info.token.clone().into())
@@ -410,6 +410,21 @@ impl Parser {
                 ))
             }
         });
+
+        let bool_prefix_fn = |parser: &mut Parser| {
+            let value = match &parser.current_token_info.token {
+                Token::True => true,
+                Token::False => false,
+                _ => Err(ParserError::expected_tokens(
+                    &[TokenDiscriminants::True, TokenDiscriminants::False],
+                    parser.current_token_info.clone(),
+                ))?,
+            };
+            Ok(AstExpression::Boolean(value))
+        };
+
+        self.register_prefix(TokenDiscriminants::True, bool_prefix_fn);
+        self.register_prefix(TokenDiscriminants::False, bool_prefix_fn);
 
         let parse_prefix_expr = |parser: &mut Parser| {
             let op = match parser.current_token_info.token {
@@ -567,6 +582,26 @@ mod tests {
         );
 
         assert_eq!(*value, 5);
+
+        Ok(())
+    }
+
+    #[test]
+    fn boolean_expression() -> anyhow::Result<()> {
+        let code = "true; false;";
+        let lexer = Lexer::from_code_str(code);
+        let mut parser = Parser::with_lexer(lexer);
+        let program = parser.parse_program()?;
+
+        assert_eq!(program.statements.len(), 2);
+        assert_matches!(
+            &program.statements[0],
+            AstStatement::ExpressionStatement(AstExpression::Boolean(true))
+        );
+        assert_matches!(
+            &program.statements[1],
+            AstStatement::ExpressionStatement(AstExpression::Boolean(false))
+        );
 
         Ok(())
     }
